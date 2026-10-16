@@ -1,20 +1,68 @@
 
 # vova-dumper
 
-SDK Generator for all Unreal Engine games. Supported versions are all of UE4 and UE5.
+SDK generator for all Unreal Engine games — UE4.11 through UE5.8. Inject into a running
+game and get a compile-clean, ABI-true C++ SDK plus `.usmap`, IDA, Dumpspace, Rizin and
+radare2 mappings.
+
+The generated CppSDK carries per-member `static_assert(offsetof(...))` checks
+(`Assertions.inl`) — an SDK from vova-dumper proves its own layouts at compile time, so a
+drifted offset surfaces as a build error instead of silent memory corruption in your tool.
+
+## Output formats
+
+- **CppSDK** — full C++ SDK with `Assertions.inl` offset verification
+- **Mappings** — `.usmap` for UE4/UE5
+- **IDA** — type headers (`.idmap` + `.h`)
+- **Dumpspace** — JSON mappings
+- **Rizin / radare2** — type headers with exact member offsets (explicit padding,
+  dialect-correct bitfields)
 
 ## How to use
 
-- Compile the dll in x64-Release
-- Inject the dll into your target game
-- The SDK is generated into the path specified by `Settings::SDKGenerationPath`, by default this is `C:\\vova-dumper`
+- Build (CMake, VS2022):
+  ```
+  cmake --preset vs2022
+  cmake --build --preset vs2022-Release
+  ```
+  The dll lands in `out/build/vs2022/bin/Release/vova-dumper.dll`.
+- Inject the dll into your target game.
+- The SDK is generated into the path specified by `Settings::SDKGenerationPath`,
+  by default `C:\vova-dumper`.
 - **See [UsingTheSDK](UsingTheSDK.md) for a guide to get started, or to migrate from an old SDK.**
-## Credits
 
-vova-dumper is a private fork of Dumper-7 by Fischsalat (https://github.com/Encryqed/Dumper-7).
-All credit for the original generator belongs to upstream; this fork carries local changes:
-version-adaptive FFieldClass offset derivation for UE5.7/5.8 (upstream issue #508) and
-FName input guards for manually-mapped injections.
+## Engine support and hardening
+
+What vova-dumper handles that its lineage does not:
+
+- **UE 5.7/5.8** — `FFieldClass` offsets are derived at runtime from the CastFlags anchor
+  and validated against canonical property-class names; hardcoded offsets break on 5.7+
+  (see upstream Dumper-7 issue #508).
+- **ABI-true derived layouts** — graph-discriminated MSVC base-tail padding. Intruder
+  deriveds (first member below `Super.GetSize()`) keep the compiler-owned slack they are
+  compiled into; pad-led deriveds get explicit `Pad_*` members. Both families land every
+  reflected member at its true offset — verified live: 102 failing layout asserts → 0.
+- **Cyclic-dependency packages** — handled structurally via a pre-pass over the whole
+  object graph instead of a hardcoded struct table.
+- **Exact enum sizes** — the forced-size underlying type is emitted for IDA and Dumpspace,
+  so byte-enums stop inflating layouts in those formats.
+- **Robust output pipeline** — UTF-8 everywhere, `vova-dumper.ini` picked up next to the
+  game exe, timestamped backups of previous outputs, duplicate-name diagnostics.
+- **Depth-guarded generation** — runaway member-depth cases soft-fail with a report
+  instead of crashing the game.
+- **Manually-mapped injection safe** — `FName` comparison-index range guards stop
+  corrupted-metadata reads from faulting inside the game's pool code.
+
+Verified live on Hood Warfare 2 (UE 5.8.3-58210709): 15.1 MB WithProperties dump over 77k
+objects, zero invalid names, and a full compile battery over the generated SDK —
+`SDK.hpp`, `Assertions.inl`, and every `*_functions.cpp` TU — clean.
+
+## Lineage
+
+vova-dumper grew out of **Dumper-7 by Fischsalat**
+(https://github.com/Encryqed/Dumper-7) and keeps its generator architecture — credit for
+the original codebase belongs there. The project has since diverged into its own
+generator; the engine support and hardening listed above are vova-dumper's own.
 
 ## Overriding Offsets
 
