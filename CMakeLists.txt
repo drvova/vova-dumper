@@ -12,7 +12,7 @@ endif()
 
 project(vova-dumper LANGUAGES CXX C)
 
-include(${CMAKE_SOURCE_DIR}/cmake/common.cmake)
+include(${CMAKE_SOURCE_DIR}/cmake/Common.cmake)
 
 # Source files - automatic search for all source files
 file(GLOB_RECURSE CPP_SOURCES 

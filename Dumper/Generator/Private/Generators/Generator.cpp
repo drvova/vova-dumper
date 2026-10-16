@@ -23,7 +23,7 @@ inline void InitSettings()
 }
 
 
-void Generator::InitEngineCore()
+bool Generator::InitEngineCore()
 {
 	/* manual override */
 	//ObjectArray::Init(/*GObjects*/, /*Layout = Default*/); // FFixedUObjectArray (UEVersion < UE4.21)
@@ -42,7 +42,8 @@ void Generator::InitEngineCore()
 	/* Multiversus [Unsupported, weird GObjects-struct] */
 	//InitObjectArrayDecryption([](void* ObjPtr) -> uint8* { return reinterpret_cast<uint8*>(uint64(ObjPtr) ^ 0x1B5DEAFD6B4068C); });
 
-	ObjectArray::Init();
+	if (!ObjectArray::Init())
+		return false;
 
 	CALL_PLATFORM_SPECIFIC_FUNCTION(FName::Init);
 
@@ -56,9 +57,11 @@ void Generator::InitEngineCore()
 	Off::InSDK::Text::InitTextOffsets(); // Must be at this position, relies on offsets initialized in Off::InitPE()
 
 	InitSettings();
+
+	return true;
 }
 
-void Generator::InitInternal()
+bool Generator::InitInternal()
 {
 	// Initialize PackageManager with all packages, their names, structs, classes enums, functions and dependencies
 	PackageManager::Init();
@@ -74,6 +77,8 @@ void Generator::InitInternal()
 
 	// Post-Initialize PackageManager after StructManager has been initialized. 'PostInit()' handles Cyclic-Dependencies detection
 	PackageManager::PostInit();
+
+	return true;
 }
 
 bool Generator::SetupDumperFolder()
@@ -135,7 +140,9 @@ bool Generator::SetupFolders(std::string& FolderName, fs::path& OutFolder, std::
 				
 		if (fs::exists(OutFolder))
 		{
-			fs::path Old = OutFolder.generic_string() + "_OLD";
+			fs::path Old = OutFolder.generic_string() + (Settings::Generator::bCreateUniqueBackups
+				? ("_" + std::to_string(std::time(nullptr)))
+				: "_OLD");
 
 			fs::remove_all(Old);
 

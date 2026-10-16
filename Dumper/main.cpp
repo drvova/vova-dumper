@@ -66,6 +66,7 @@ DWORD MainThread(HMODULE Module)
 	FILE* Dummy;
 	freopen_s(&Dummy, "CONIN$", "r", stdin);
 	freopen_s(&Dummy, "CONOUT$", "w", stderr);
+	freopen_s(&Dummy, "CONOUT$", "w", stdout);
 	std::cerr.clear(); // clear internal error flags on cerr after redirect
 	std::cerr << std::boolalpha << std::hex;
 
@@ -81,42 +82,56 @@ DWORD MainThread(HMODULE Module)
 	std::cerr << "Started Generation [vova-dumper]!\n";
 	auto DumpStartTime = std::chrono::high_resolution_clock::now();
 
-	Generator::InitEngineCore();
-	Generator::InitInternal();
+	const bool bInitSuccess = Generator::InitEngineCore() && Generator::InitInternal();
 
-	if (Settings::Generator::GameName.empty() && Settings::Generator::GameVersion.empty())
+	if (bInitSuccess)
 	{
-		// Only Possible in Main()
-		FString Name;
-		FString Version;
-		UEClass Kismet = ObjectArray::FindClassFast("KismetSystemLibrary");
-		UEFunction GetGameName = Kismet.GetFunction("KismetSystemLibrary", "GetGameName");
-		UEFunction GetEngineVersion = Kismet.GetFunction("KismetSystemLibrary", "GetEngineVersion");
 
-		Kismet.ProcessEvent(GetGameName, &Name);
-		Kismet.ProcessEvent(GetEngineVersion, &Version);
+		if (Settings::Generator::GameName.empty() && Settings::Generator::GameVersion.empty())
+		{
+			// Only Possible In Main()
+			FString Name;
+			FString Version;
+			UEClass Kismet = ObjectArray::FindClassFast("KismetSystemLibrary");
 
-		Settings::Generator::GameName = Name.ToString();
-		Settings::Generator::GameVersion = Version.ToString();
+			if (Kismet)
+			{
+				UEFunction GetGameName = Kismet.GetFunction("KismetSystemLibrary", "GetGameName");
+				UEFunction GetEngineVersion = Kismet.GetFunction("KismetSystemLibrary", "GetEngineVersion");
+
+				if (GetGameName && GetEngineVersion)
+				{
+					Kismet.ProcessEvent(GetGameName, &Name);
+					Kismet.ProcessEvent(GetEngineVersion, &Version);
+
+					Settings::Generator::GameName = Name.ToString();
+					Settings::Generator::GameVersion = Version.ToString();
+				}
+			}
+		}
+
+		std::cerr << "GameName: " << Settings::Generator::GameName << "\n";
+		std::cerr << "GameVersion: " << Settings::Generator::GameVersion << "\n\n";
+
+		std::cerr << "FolderName: " << (Settings::Generator::GameVersion + '-' + Settings::Generator::GameName) << "\n\n";
+
+		Generator::Generate<CppGenerator>();
+		Generator::Generate<MappingGenerator>();
+		Generator::Generate<IDAMappingGenerator>();
+		Generator::Generate<DumpspaceGenerator>();
+		Generator::Generate<RizinMappingGenerator>();
+		Generator::Generate<Radare2MappingGenerator>();
+
+		auto DumpFinishTime = std::chrono::high_resolution_clock::now();
+
+		std::chrono::duration<double, std::milli> DumpTime = DumpFinishTime - DumpStartTime;
+
+		std::cerr << "\n\nGenerating SDK took (" << DumpTime.count() << "ms)\n\n\n";
 	}
-
-	std::cerr << "GameName: " << Settings::Generator::GameName << "\n";
-	std::cerr << "GameVersion: " << Settings::Generator::GameVersion << "\n\n";
-
-	std::cerr << "FolderName: " << (Settings::Generator::GameVersion + '-' + Settings::Generator::GameName) << "\n\n";
-
-	Generator::Generate<CppGenerator>();
-	Generator::Generate<MappingGenerator>();
-	Generator::Generate<IDAMappingGenerator>();
-	Generator::Generate<DumpspaceGenerator>();
-	Generator::Generate<RizinMappingGenerator>();
-	Generator::Generate<Radare2MappingGenerator>();
-
-	auto DumpFinishTime = std::chrono::high_resolution_clock::now();
-
-	std::chrono::duration<double, std::milli> DumpTime = DumpFinishTime - DumpStartTime;
-
-	std::cerr << "\n\nGenerating SDK took (" << DumpTime.count() << "ms)\n\n\n";
+	else
+	{
+		std::cerr << "\nEngine init failed; skipping SDK generation. Press F6 to unload.\n\n";
+	}
 
 	if (Settings::Debug::bExecuteSDKTestScript)
 	{

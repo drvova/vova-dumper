@@ -529,7 +529,6 @@ void PackageManager::HandleCycles()
 				HelperMarkStructDependenciesOfPackage(ObjectArray::GetByIndex<UEStruct>(Index), PackageIndexWithLeastDependencies, PackageIndexToMarkCyclicWith, !bIsStruct);
 			};
 
-			const DependencyManager& LoserStructsOrClasses = (PackageIndexWithLeastDependencies == PreviousPackageIndex) ? PreviousStructsOrClasses : CurrentStructsOrClasses;
 
 			PreviousStructsOrClasses.VisitAllNodesWithCallback(SetCycleCallback);
 		}
@@ -563,7 +562,16 @@ void PackageManager::HandleCycles()
 			continue;
 		}
 
-		const RequirementInfo& CurrentRequirements = CurrentPackageInfo.GetPackageDependencies().ClassesDependencies.at(Cycle.CurrentPackage);
+		/* The requirement being broken is the dependency Current has on Previous;
+		   a package never lists itself as a dependency, so looking up
+		   Cycle.CurrentPackage would throw out_of_range (issue #547). */
+		const auto& CurrentClassesDependencies = CurrentPackageInfo.GetPackageDependencies().ClassesDependencies;
+		const auto CurrentRequirementsIt = CurrentClassesDependencies.find(Cycle.PreviousPacakge);
+
+		if (CurrentRequirementsIt == CurrentClassesDependencies.end())
+			continue;
+
+		const RequirementInfo& CurrentRequirements = CurrentRequirementsIt->second;
 
 		/* Mark classes as 'do not include' when this package is cyclic but can still require _structs.hpp */
 		if (CurrentRequirements.bShouldIncludeStructs)

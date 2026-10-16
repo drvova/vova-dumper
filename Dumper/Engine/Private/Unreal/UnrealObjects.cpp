@@ -504,10 +504,16 @@ std::vector<std::pair<FName, int64>> UEEnum::GetNameValuePairs() const
 
 		if (!bIsNamesPtrTagged)
 		{
-			/* StaticNamesUTF8 is not supported yet. See: https://github.com/EpicGames/UnrealEngine/blob/ue5-main/Engine/Source/Runtime/CoreUObject/Public/UObject/Class.h#L3408*/
-			std::cerr << "vova-dumper [UEEnum::GetNameValuePairs()]: UEnum::Names pointer is tagged! This is not supported yet!" << std::endl;
-			Sleep(100'000);
-			exit(1);
+			/* StaticNamesUTF8 is not supported yet. See: https://github.com/EpicGames/UnrealEngine/blob/ue5-main/Engine/Source/Runtime/CoreUObject/Public/UObject/Class.h#L3408 */
+			static bool bWarnedAboutUTF8Enums = false;
+
+			if (!bWarnedAboutUTF8Enums) [[unlikely]]
+			{
+				bWarnedAboutUTF8Enums = true;
+				std::cerr << "vova-dumper [UEEnum::GetNameValuePairs()]: UEnum::Names pointer is untagged (StaticNamesUTF8); these enums are skipped." << std::endl;
+			}
+
+			return Ret;
 		}
 
 		const int64* Values = reinterpret_cast<int64*>(*reinterpret_cast<uintptr_t*>(Object + EnumNamesOffset + 0x8) & PointerMaskNoTag);

@@ -39,7 +39,7 @@ private:
 public:
 	static void InitDecryption(uint8_t* (*DecryptionFunction)(void* ObjPtr), const char* DecryptionLambdaAsStr);
 
-	static void Init(bool bScanAllMemory = false, const char* const ModuleName = Settings::General::DefaultModuleName);
+	static bool Init(bool bScanAllMemory = false, const char* const ModuleName = Settings::General::DefaultModuleName);
 
 	static void Init(int32 GObjectsOffset, const FFixedUObjectArrayLayout& ObjectArrayLayout = FFixedUObjectArrayLayout(), const char* const ModuleName = Settings::General::DefaultModuleName);
 	static void Init(int32 GObjectsOffset, int32 ElementsPerChunk, const FChunkedFixedUObjectArrayLayout& ObjectArrayLayout = FChunkedFixedUObjectArrayLayout(), const char* const ModuleName = Settings::General::DefaultModuleName);

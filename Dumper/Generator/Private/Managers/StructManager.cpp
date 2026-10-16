@@ -137,6 +137,9 @@ void StructManager::InitAlignmentsAndNames()
 		// Get a top to bottom list of a struct and all of its supers
 		for (UEStruct S = ObjAsStruct; S; S = S.GetSuper())
 		{
+			if (NumElementsInStructStack >= MaxNumSuperClasses) [[unlikely]]
+				break;
+
 			StructStack[NumElementsInStructStack] = S;
 			NumElementsInStructStack++;
 		}
@@ -209,38 +212,43 @@ void StructManager::InitSizesAndIsFinal()
 		* 
 		* breaks out of the loop after encountering a super-struct which is not empty (aka. has member-variables)
 		*/
-		for (UEStruct S = Super; S; S = S.GetSuper())
+	static constexpr int MaxNumSuperClasses = 0x30;
+	int32 Depth = 0x0;
+
+	for (UEStruct S = Super; S; S = S.GetSuper())
+	{
+		if (++Depth > MaxNumSuperClasses) [[unlikely]]
+			break;
+
+		auto It = StructInfoOverrides.find(S.GetIndex());
+
+		if (It == StructInfoOverrides.end())
 		{
-			auto It = StructInfoOverrides.find(S.GetIndex());
-
-			if (It == StructInfoOverrides.end())
-			{
-				std::cerr << "\n\n\nvova-dumper: Error, struct wasn't found in 'StructInfoOverrides'! Exiting...\n\n\n" << std::endl;
-				Sleep(10000);
-				exit(1);
-			}
-
-			StructInfo& Info = It->second;
-
-			// Struct is not final, as it is another structs' super
-			Info.bIsFinal = false;
-
-			const int32 SizeToCheck = Info.Size == INT_MAX ? S.GetStructSize() : Info.Size;
-
-			const bool bHasMembers = S.HasMembers();
-
-			// Only change lowest offset if it's lower than the already found lowest offset (by default: struct-size)
-			if (Align(SizeToCheck, Info.Alignment) > LowestOffset /*&& (bHasMembers || Info.Size != 0x1)*/)
-			{
-				if (Info.Size > LowestOffset)
-					Info.Size = LowestOffset;
-
-				Info.bHasReusedTrailingPadding = true;
-			}
-
-			if (bHasMembers)
-				break;
+			std::cerr << "\n\n\nvova-dumper: Error, struct '" << S.GetFullName() << "' wasn't found in 'StructInfoOverrides'; skipping it.\n\n\n" << std::endl;
+			continue;
 		}
+
+		StructInfo& Info = It->second;
+
+		// Struct is not final, as it is another structs' super
+		Info.bIsFinal = false;
+
+		const int32 SizeToCheck = Info.Size == INT_MAX ? S.GetStructSize() : Info.Size;
+
+		const bool bHasMembers = S.HasMembers();
+
+		// Only change lowest offset if it's lower than the already found lowest offset (by default: struct-size)
+		if (Align(SizeToCheck, Info.Alignment) > LowestOffset /*&& (bHasMembers || Info.Size != 0x1)*/)
+		{
+			if (Info.Size > LowestOffset)
+				Info.Size = LowestOffset;
+
+			Info.bHasReusedTrailingPadding = true;
+		}
+
+		if (bHasMembers)
+			break;
+	}
 	}
 }
 

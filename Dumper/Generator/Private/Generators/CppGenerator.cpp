@@ -1,5 +1,4 @@
 #include <vector>
-#include <array>
 
 #include "Unreal/ObjectArray.h"
 #include "Generators/CppGenerator.h"
@@ -54,6 +53,10 @@ std::string CppGenerator::MakeMemberStringWithoutName(const std::string& Type)
 {
 	return '\t' + Type + ";\n";
 }
+
+std::unordered_set<int32> CppGenerator::StructsRequiringEmptyBase;
+
+std::unordered_set<int32> CppGenerator::BasesNeedingTailSlack;
 
 std::string CppGenerator::GenerateBytePadding(const int32 Offset, const int32 PadSize, std::string&& Reason)
 {
@@ -202,7 +205,28 @@ std::string CppGenerator::GenerateMembers(const StructWrapper& Struct, const Mem
 		}
 	}
 
-	const int32 MissingByteCount = Struct.GetUnalignedSize() - PrevPropertyEnd;
+
+	/* [issue #562] A struct with no members and no super whose size is <= 0x1 normally gets a
+	   one-byte Pad_0 placeholder so derived structs' members start after the base byte. But
+	   when a derived struct's first member is reflected at 0x0000 the native layout applied
+	   empty-base-optimisation, and the placeholder must be suppressed here or that derived's
+	   member- and size-asserts can never hold. Which bases qualify is decided by the pre-pass
+	   in Generate() (StructsRequiringEmptyBase) so every derived of the same base agrees. */
+	const UEStruct UnrealStructBeingEmitted = Struct.GetUnrealStruct();
+
+	/* Synthetic wrappers (predefined structs, function parameter-structs) carry no UnrealStruct; they are never in the pre-pass set, so they keep the baseline placeholder. */
+	if (!bIsUnion && SuperSize == 0x0 && Members.GetNumMembers() == 0x0 && Struct.GetUnalignedSize() <= 0x1 && UnrealStructBeingEmitted && StructsRequiringEmptyBase.contains(UnrealStructBeingEmitted.GetIndex()))
+		return OutMembers;
+	/* [MSVC tail-slack fix] When a struct's aligned size exceeds its content end, the compiler adds tail
+	   slack (alignas rounds sizeof up). MSVC reuses that slack for a derived's leading Pad member
+	   (base-tail-padding reuse on non-POD bases), shifting every derived member below its reflected
+	   offset. Covering the slack with a real Pad member removes the hazard -- but ONLY when no derived
+	   actually enters the tail: either via StructManager's reuse flag (overrides-table deriveds), or via
+	   any reflected member below the aligned size (unlisted deriveds, caught by the pre-pass set). For
+	   intruded bases the slack is load-bearing and MUST stay compiler-owned. */
+	const bool bKeepTailSlack = Struct.HasReusedTrailingPadding() || (UnrealStructBeingEmitted && BasesNeedingTailSlack.contains(UnrealStructBeingEmitted.GetIndex()));
+
+	const int32 MissingByteCount = (bKeepTailSlack ? Struct.GetUnalignedSize() : Struct.GetSize()) - PrevPropertyEnd;
 
 	if (MissingByteCount > 0x0 /* >=Struct.GetAlignment()*/)
 		OutMembers += GenerateBytePadding(PrevPropertyEnd, MissingByteCount, "Fixing Struct Size After Last Property [ vova-dumper ]");
@@ -1138,8 +1162,12 @@ std::string CppGenerator::GetMemberTypeStringWithoutConst(UEProperty Member, int
 		{
 			EnumWrapper WrappedEnum = EnumWrapper(Enum);
 
-			//if (WrappedEnum.GetUnderlyingTypeSize() != Member.GetSize())
-			//	return GetEnumForcedSizeType(WrappedEnum, Member.GetSize());
+			/* A struct member may pack an enum into fewer bytes than the enum's
+			   declared underlying type (e.g. a uint32 enum stored as uint8); emit
+			   the forced-size wrapper so the member occupies exactly Member.GetSize()
+			   and the layout assertions hold (issue #547). */
+			if (WrappedEnum.GetUnderlyingTypeSize() != Member.GetSize())
+				return GetEnumForcedSizeType(WrappedEnum, Member.GetSize());
 
 			return std::format("enum {}", GetEnumPrefixedName(WrappedEnum));
 		}
@@ -1744,6 +1772,102 @@ void CppGenerator::Generate()
 	GenerateBasicFiles(BasicHpp, BasicCpp, (Settings::Debug::bGenerateAssertionFile ? DebugAssertions : BasicHpp));
 
 
+
+	/* [issue #562] Pre-pass over the whole struct graph, before any struct is emitted: decide for every
+	   empty base (no members, no super, size <= 0x1) whether its one-byte placeholder must be suppressed.
+	   A derived struct whose first member is reflected at 0x0000 proves the native layout applied
+	   empty-base-optimisation, so the base must be emitted truly empty; a derived whose first member sits
+	   at >= 0x0001 proves the base byte is real and the placeholder must stay. A base that sees both
+	   shapes would mean inconsistent reflection; the placeholder then stays (baseline behaviour). */
+	std::unordered_set<int32> BasesNeedingEmpty;
+	std::unordered_set<int32> BasesNeedingByte;
+
+	for (PackageInfoHandle Package : PackageManager::IterateOverPackageInfos())
+	{
+		if (!Package.HasStructs())
+			continue;
+
+		DependencyManager::OnVisitCallbackType CollectEmptyBase = [&](int32 Index) -> void
+		{
+			const StructWrapper Derived = StructWrapper(ObjectArray::GetByIndex<UEStruct>(Index));
+
+			if (!Derived.IsValid() || Derived.IsFunction() || Derived.IsInterface())
+				return;
+
+			const StructWrapper Super = Derived.GetSuper();
+
+			if (!Super.IsValid() || Super.IsFunction() || Super.IsInterface() || Super.GetMembers().GetNumMembers() != 0x0 || Super.GetUnalignedSize() > 0x1)
+				return;
+
+			/* The emission-side guard only fires when the base's own super occupies no bytes (reflected size 0x0),
+			   so mirror that here: a base whose super has a nonzero size keeps its placeholder. */
+			const StructWrapper BaseSuper = Super.GetSuper();
+
+			if (BaseSuper.IsValid() && BaseSuper.GetSize() != 0x0)
+				return;
+
+
+			const MemberManager Members = Derived.GetMembers();
+
+			if (Members.GetNumMembers() == 0x0)
+				return;
+
+			int32 MinMemberOffset = 0x7FFFFFFF;
+
+			for (const PropertyWrapper& Member : Members.IterateMembers())
+			{
+				if (Member.GetOffset() < MinMemberOffset)
+					MinMemberOffset = Member.GetOffset();
+			}
+
+			if (MinMemberOffset <= 0x0)
+				BasesNeedingEmpty.insert(Super.GetUnrealStruct().GetIndex());
+			else
+				BasesNeedingByte.insert(Super.GetUnrealStruct().GetIndex());
+		};
+
+		Package.GetSortedStructs().VisitAllNodesWithCallback(CollectEmptyBase);
+
+		/* [MSVC tail-slack fix] Same graph walk, second question: which slackful bases have a derived whose
+		   first member starts below the base's ALIGNED size (i.e. inside the compiler-owned tail)?
+		   StructManager's bHasReusedTrailingPadding only gets set for deriveds listed in the hardcoded
+		   StructInfoOverrides, so reflected intrusions from unlisted deriveds would otherwise be missed.
+		   Intruded bases must keep their compiler slack (MSVC's non-POD base-tail reuse is what makes the
+		   derived member land at its reflected offset); non-intruded ones get the slack covered by a Pad. */
+		DependencyManager::OnVisitCallbackType CollectTailSlack = [&](int32 Index) -> void
+		{
+			const StructWrapper Derived = StructWrapper(ObjectArray::GetByIndex<UEStruct>(Index));
+
+			if (!Derived.IsValid() || Derived.IsFunction() || Derived.IsInterface())
+				return;
+
+			const StructWrapper Super = Derived.GetSuper();
+
+			if (!Super.IsValid() || Super.IsFunction() || Super.IsInterface() || !Super.GetUnrealStruct())
+				return;
+
+			/* Only slackful bases matter; flagged ones already keep their slack at emission time. */
+			if (Super.GetUnalignedSize() >= Super.GetSize() || Super.HasReusedTrailingPadding())
+				return;
+
+			for (const PropertyWrapper& Member : Derived.GetMembers().IterateMembers())
+			{
+				if (!Member.IsStatic() && Member.GetOffset() < Super.GetSize())
+				{
+					BasesNeedingTailSlack.insert(Super.GetUnrealStruct().GetIndex());
+					break;
+				}
+			}
+		};
+
+		Package.GetSortedStructs().VisitAllNodesWithCallback(CollectTailSlack);
+	}
+
+	for (const int32 BaseIndex : BasesNeedingEmpty)
+	{
+		if (!BasesNeedingByte.contains(BaseIndex))
+			StructsRequiringEmptyBase.insert(BaseIndex);
+	}
 	// Generates all packages and writes them to files
 	for (PackageInfoHandle Package : PackageManager::IterateOverPackageInfos())
 	{

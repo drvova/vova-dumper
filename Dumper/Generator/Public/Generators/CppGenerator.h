@@ -2,6 +2,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <unordered_set>
 
 #include "Managers/DependencyManager.h"
 #include "Managers/StructManager.h"
@@ -122,6 +123,16 @@ private: /* utility functions */
     static std::string GetAssertionMacroString(const std::string& PrefixedStructUniqueName);
 
     static std::string GetCycleFixupType(const StructWrapper& Struct, bool bIsForInheritance);
+
+    /* [issue #562] Structs whose Pad_0 byte must be suppressed because a derived struct's first member is reflected at 0x0 (native layout applied empty-base optimisation). Populated by a full-graph pre-pass in Generate() before any struct is emitted. */
+    static std::unordered_set<int32> StructsRequiringEmptyBase;
+
+    /* [MSVC tail-slack fix] Bases whose aligned size exceeds their content end AND whose tail is entered
+       by some derived's first member (below the base's aligned size, without StructManager's reuse flag
+       having caught it -- the flag walk only covers the hardcoded StructInfoOverrides). These must keep
+       compiler-owned tail slack; every other slackful base gets its slack covered by a real Pad member
+       so MSVC cannot slurp a derived's leading Pad into it. Populated by the full-graph pre-pass in Generate(). */
+    static std::unordered_set<int32> BasesNeedingTailSlack;
 
     static std::unordered_map<std::string, UEProperty> GetUnknownProperties();
 

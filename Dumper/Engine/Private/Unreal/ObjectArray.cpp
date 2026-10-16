@@ -200,7 +200,7 @@ void ObjectArray::InitDecryption(uint8_t* (*DecryptionFunction)(void* ObjPtr), c
 
 
 /* We don't speak about this function... */
-void ObjectArray::Init(bool bScanAllMemory, const char* const ModuleName)
+bool ObjectArray::Init(bool bScanAllMemory, const char* const ModuleName)
 {
 	if (!bScanAllMemory)
 	{
@@ -322,21 +322,19 @@ void ObjectArray::Init(bool bScanAllMemory, const char* const ModuleName)
 			ObjectArray::InitializeFUObjectItem(*reinterpret_cast<uint8_t**>(ChunksPtr));
 		}
 
-		return;
+		return true;
 	}
 
 	if (!bScanAllMemory)
-	{
-		ObjectArray::Init(true);
-		return;
-	}
+		return ObjectArray::Init(true, ModuleName);
 
 	if (GObjects == nullptr)
 	{
 		std::cerr << "\nGObjects couldn't be found, please overwrite the offset in Generator.cpp.\n\n\n";
-		Sleep(10000);
-		exit(1);
+		return false;
 	}
+
+	return true;
 }
 
 void ObjectArray::Init(int32 GObjectsOffset, const FFixedUObjectArrayLayout& ObjectArrayLayout, const char* const ModuleName)

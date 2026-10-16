@@ -47,8 +47,8 @@ private:
 	static inline bool bDumepdEditorOnlyMetadata = false;
 
 public:
-    static void InitEngineCore();
-    static void InitInternal();
+    static bool InitEngineCore();
+    static bool InitInternal();
 
 private:
     static bool SetupDumperFolder();

@@ -110,8 +110,13 @@ void Settings::Config::Load()
 {
 	namespace fs = std::filesystem;
 
-	// Try local vova-dumper.ini
-	const std::string LocalPath = (fs::current_path() / "vova-dumper.ini").string();
+	// Try local vova-dumper.ini next to the game executable (the current working
+	// directory is not reliable after injection; issue #570)
+	char GameExePath[MAX_PATH] = {};
+	GetModuleFileNameA(nullptr, GameExePath, MAX_PATH);
+	std::string ExeDir = fs::path(GameExePath).parent_path().string();
+
+	const std::string LocalPath = (fs::path(ExeDir) / "vova-dumper.ini").string();
 	const char* ConfigPath = nullptr;
 
 	if (fs::exists(LocalPath)) 
