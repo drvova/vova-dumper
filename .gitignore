@@ -1,0 +1,10 @@
+out/
+.vs/
+*.user
+*.aps
+Win32/
+x64/
+[Dd]ebug/
+[Rr]elease/
+.idea/
+.vscode/
